@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  /* Surface & Background Colors */
+  --color-background: #0a0a0a;
+  --color-card: #121212;
+  --color-surface: #171717;
+  
+  /* Borders */
+  --color-border-dark: #262626;
+  --color-borderDark: #262626;
+
+  /* Brand Accents */
+  --color-brand-blue: #06b6d4;
+  --color-brandBlue: #06b6d4;
+  --color-brand-purple: #6366f1;
+  --color-brandPurple: #6366f1;
+  --color-brand-green: #10b981;
+  --color-brandGreen: #10b981;
+
+  /* Text Muted */
+  --color-text-muted: #a3a3a3;
+  --color-textMuted: #a3a3a3;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: #f5f5f5;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background-color: rgba(6, 182, 212, 0.3);
+    color: #67e8f9;
+  }
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+  background: rgba(23, 23, 23, 0.7);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(18, 18, 18, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.glass-card:hover {
+  border-color: rgba(6, 182, 212, 0.4);
+  box-shadow: 0 0 25px -5px rgba(6, 182, 212, 0.15);
+}
