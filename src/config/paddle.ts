@@ -5,4 +5,4 @@ export const PADDLE_PRICES = {
   ENT_YEARLY: "pri_01kyy1hv98zmatejkx9awn6nwg",  // Replace with your $200/yr Price ID
 };
 
-export const PADDLE_CLIENT_TOKEN = "live_71f408f3e75fae06de36a181552"; // From Paddle Dashboard -> Catalog -> Developer Tools
+export const PADDLE_CLIENT_TOKEN = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN || "";
