@@ -2,33 +2,23 @@ import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import nodemailer from "nodemailer";
 
-// Initialize Resend
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-// Initialize SendPulse SMTP Transporter
-const sendPulseTransporter = nodemailer.createTransport({
-  host: "smtp-pulse.com",
-  port: 465,
-  secure: true, // SSL
-  auth: {
-    user: process.env.SENDPULSE_SMTP_USER,
-    pass: process.env.SENDPULSE_SMTP_PASS,
-  },
-});
-
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { user, email_data } = body;
+
+    if (!user || !user.email || !email_data) {
+      return NextResponse.json({ error: "Invalid payload from Supabase hook" }, { status: 400 });
+    }
+
     const { token_hash, redirect_to, email_action_type } = email_data;
 
     // Construct the Supabase Verification URL
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
     const confirmUrl = `${supabaseUrl}/auth/v1/verify?token=${token_hash}&type=${email_action_type}&redirect_to=${redirect_to}`;
 
     const emailSubject = "Confirm your AI Asset Video Builder Account";
 
-    // Dark-themed HTML Email Template matching platform UI
     const htmlTemplate = `
       <!DOCTYPE html>
       <html>
@@ -57,19 +47,38 @@ export async function POST(req: Request) {
     `;
 
     // 1. Try sending with Resend (Primary)
-    try {
-      await resend.emails.send({
-        from: "AI Asset Video Builder <onboarding@resend.dev>",
-        to: user.email,
-        subject: emailSubject,
-        html: htmlTemplate,
-      });
-      console.log("✅ Email sent via Resend");
-      return NextResponse.json({ success: true, provider: "resend" });
-    } catch (resendError) {
-      console.warn("⚠️ Resend failed/limited. Falling back to SendPulse...", resendError);
+    if (process.env.RESEND_API_KEY) {
+      try {
+        const resend = new Resend(process.env.RESEND_API_KEY);
+        const resendResult = await resend.emails.send({
+          from: "AI Asset Video Builder <onboarding@resend.dev>",
+          to: user.email,
+          subject: emailSubject,
+          html: htmlTemplate,
+        });
 
-      // 2. Fallback to SendPulse (Secondary)
+        if (!resendResult.error) {
+          console.log("✅ Email sent via Resend");
+          return NextResponse.json({ success: true, provider: "resend" });
+        }
+        console.warn("⚠️ Resend returned error, using SendPulse fallback:", resendResult.error);
+      } catch (err) {
+        console.warn("⚠️ Resend execution failed, falling back...", err);
+      }
+    }
+
+    // 2. Fallback to SendPulse (Secondary)
+    if (process.env.SENDPULSE_SMTP_USER && process.env.SENDPULSE_SMTP_PASS) {
+      const sendPulseTransporter = nodemailer.createTransport({
+        host: "smtp-pulse.com",
+        port: 465,
+        secure: true,
+        auth: {
+          user: process.env.SENDPULSE_SMTP_USER,
+          pass: process.env.SENDPULSE_SMTP_PASS,
+        },
+      });
+
       await sendPulseTransporter.sendMail({
         from: `"AI Asset Video Builder" <${process.env.SENDPULSE_SMTP_USER}>`,
         to: user.email,
@@ -80,8 +89,11 @@ export async function POST(req: Request) {
       console.log("✅ Email sent via SendPulse fallback");
       return NextResponse.json({ success: true, provider: "sendpulse" });
     }
+
+    throw new Error("No valid email providers configured or active.");
   } catch (error: any) {
-    console.error("❌ Auth email hook error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("❌ Auth email hook error:", error.message || error);
+    // Return 200 with error log to prevent Supabase sign-up from totally breaking if emails fail
+    return NextResponse.json({ success: false, error: error.message }, { status: 200 });
   }
 }
