@@ -9,14 +9,18 @@ import { HWIDTable, DeviceBinding } from "../../components/admin/HWIDTable";
 import { Key, Send, ShieldAlert, CheckCircle, ArrowLeft, Shield, Loader2 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 
-// Parse comma-separated emails from environment variables with whitespace & case normalization
-const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "muqasim444@gmail.com")
+// Build list with explicit fallback to prevent env var loading bugs on client
+const HARDCODED_ADMINS = ["muqasim444@gmail.com"];
+const ENV_ADMINS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
   .split(",")
-  .map((e) => e.trim().toLowerCase());
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+const ADMIN_EMAILS = Array.from(new Set([...HARDCODED_ADMINS, ...ENV_ADMINS]));
 
 export default function AdminPage() {
   const router = useRouter();
-  
+
   // Auth & Admin Protection States
   const [authLoading, setAuthLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -40,7 +44,9 @@ export default function AdminPage() {
         .select("*, licenses(key, tier, user_id)")
         .order("created_at", { ascending: false });
 
-      if (!error && data) {
+      if (error) {
+        console.error("Supabase device fetch error:", error.message);
+      } else if (data) {
         setDevices(data as unknown as DeviceBinding[]);
       }
     } catch (err) {
@@ -60,14 +66,23 @@ export default function AdminPage() {
         return;
       }
 
+      setCurrentUser(user);
+
       // Normalized Case-Insensitive Check
       const userEmail = user.email?.trim().toLowerCase();
-      const isEmailAllowed = userEmail && ADMIN_EMAILS.includes(userEmail);
-      const hasAdminRole = user.user_metadata?.role === "admin";
+      const isEmailAllowed = !!(userEmail && ADMIN_EMAILS.includes(userEmail));
+      const hasAdminRole =
+        user.user_metadata?.role === "admin" || user.app_metadata?.role === "admin";
+
+      console.log("[Admin Verification Debug]:", {
+        userEmail,
+        ADMIN_EMAILS,
+        isEmailAllowed,
+        hasAdminRole,
+      });
 
       if (isEmailAllowed || hasAdminRole) {
         setIsAdmin(true);
-        setCurrentUser(user);
         await fetchDevices(); // Fetch devices once verified as admin
       } else {
         setIsAdmin(false);
@@ -93,11 +108,11 @@ export default function AdminPage() {
       const data = await res.json();
 
       if (data.success) {
-        setResult({ success: true, key: data.license.key });
+        setResult({ success: true, key: data.license?.key || data.key });
         setEmail("");
-        fetchDevices(); // Refresh list in case a binding changed
+        fetchDevices(); // Refresh hardware device list
       } else {
-        setResult({ success: false, error: data.error });
+        setResult({ success: false, error: data.error || "Failed to generate key." });
       }
     } catch (err) {
       setResult({ success: false, error: "Network request failed." });
@@ -120,11 +135,11 @@ export default function AdminPage() {
         console.error("Unbind failed:", data.error);
       }
     } catch (err) {
-      console.error("Failed to unbind device", err);
+      console.error("Failed to unbind device:", err);
     }
   };
 
-  // Show Auth Loading Spinner
+  // 1. Show Auth Loading Spinner
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background text-white flex items-center justify-center">
@@ -133,7 +148,7 @@ export default function AdminPage() {
     );
   }
 
-  // Access Denied Screen for Non-Admins
+  // 2. Access Denied Screen for Non-Admins
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-background text-white flex items-center justify-center px-6">
@@ -144,7 +159,7 @@ export default function AdminPage() {
           <div className="space-y-1">
             <h1 className="text-xl font-bold">Access Denied</h1>
             <p className="text-xs text-textMuted leading-relaxed">
-              Your account (<span className="text-white">{currentUser?.email}</span>) does not have administrative rights.
+              Your account (<span className="text-white font-mono">{currentUser?.email || "Unknown"}</span>) does not have administrative rights.
             </p>
           </div>
           <Link href="/account">
@@ -157,7 +172,7 @@ export default function AdminPage() {
     );
   }
 
-  // Protected Admin Interface
+  // 3. Protected Admin Interface
   return (
     <div className="min-h-screen bg-background text-white px-6 py-12">
       <div className="max-w-6xl mx-auto space-y-8">
