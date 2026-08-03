@@ -1,21 +1,59 @@
-// src/app/admin/page.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
-import { KeyGenerator } from "../../components/admin/KeyGenerator";
 import { HWIDTable, DeviceBinding } from "../../components/admin/HWIDTable";
-import { Key, Send, ShieldAlert, CheckCircle, ArrowLeft, Shield } from "lucide-react";
+import { Key, Send, ShieldAlert, CheckCircle, ArrowLeft, Shield, Loader2 } from "lucide-react";
+import { supabase } from "../../lib/supabase";
+
+// 1. Add your designated admin emails here
+const ADMIN_EMAILS = ["your-admin-email@domain.com"]; 
 
 export default function AdminPage() {
+  const router = useRouter();
+  
+  // Auth & Admin Protection States
+  const [authLoading, setAuthLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  // Form & Dashboard States
   const [email, setEmail] = useState("");
   const [tier, setTier] = useState("PRO");
   const [maxDevices, setMaxDevices] = useState(3);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ success: boolean; key?: string; error?: string } | null>(null);
   const [devices, setDevices] = useState<DeviceBinding[]>([]);
+
+  // 2. Protect Route On Load
+  useEffect(() => {
+    async function checkAdmin() {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.push("/login");
+        return;
+      }
+
+      // Check if user is in hardcoded list OR has 'admin' in user_metadata
+      const isEmailAllowed = user.email && ADMIN_EMAILS.includes(user.email);
+      const hasAdminRole = user.user_metadata?.role === "admin";
+
+      if (isEmailAllowed || hasAdminRole) {
+        setIsAdmin(true);
+        setCurrentUser(user);
+      } else {
+        setIsAdmin(false);
+      }
+
+      setAuthLoading(false);
+    }
+
+    checkAdmin();
+  }, [router]);
 
   const handleGenerateKey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +97,40 @@ export default function AdminPage() {
     }
   };
 
+  // 3. Show Loading Spinner
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background text-white flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-brandBlue" />
+      </div>
+    );
+  }
+
+  // 4. Access Denied Screen for Non-Admins
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-background text-white flex items-center justify-center px-6">
+        <Card className="p-8 text-center space-y-4 max-w-md w-full border-red-500/30">
+          <div className="w-12 h-12 bg-red-500/10 text-red-400 rounded-full flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-6 h-6" />
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-xl font-bold">Access Denied</h1>
+            <p className="text-xs text-textMuted leading-relaxed">
+              Your account (<span className="text-white">{currentUser?.email}</span>) does not have administrative rights.
+            </p>
+          </div>
+          <Link href="/account">
+            <Button variant="secondary" className="w-full">
+              Back to Account
+            </Button>
+          </Link>
+        </Card>
+      </div>
+    );
+  }
+
+  // 5. Protected Admin Interface
   return (
     <div className="min-h-screen bg-background text-white px-6 py-12">
       <div className="max-w-6xl mx-auto space-y-8">
