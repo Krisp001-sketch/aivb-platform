@@ -10,7 +10,10 @@ import { Key, Send, ShieldAlert, CheckCircle, ArrowLeft, Shield, Loader2 } from 
 import { supabase } from "../../lib/supabase";
 
 // 1. Add your designated admin emails here
-const ADMIN_EMAILS = ["your-admin-email@domain.com"]; 
+// Parse comma-separated emails from environment variables
+const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS?.split(",") || [
+  "muqasim444@gmail.com",
+];
 
 export default function AdminPage() {
   const router = useRouter();
