@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Script from 'next/script';
 import { PADDLE_PRICES, PADDLE_CLIENT_TOKEN } from '../../config/paddle';
-import { Check, Shield, Zap, Sparkles, ArrowLeft } from 'lucide-react';
+import { Check, Shield, Zap, Sparkles, ArrowLeft, CreditCard, Copy, CheckCircle2, X, Send } from 'lucide-react';
 
 declare global {
   interface Window {
@@ -14,19 +15,29 @@ declare global {
 export default function PricingPage() {
   const router = useRouter();
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [isPkModalOpen, setIsPkModalOpen] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const initPaddle = () => {
+    if (typeof window !== 'undefined' && window.Paddle) {
+      if (!window.Paddle.Setup) {
+        window.Paddle.Environment.set('production');
+        window.Paddle.Initialize({
+          token: PADDLE_CLIENT_TOKEN,
+        });
+      }
+    }
+  };
 
   useEffect(() => {
     if (window.Paddle) {
-      window.Paddle.Environment.set('production');
-      window.Paddle.Initialize({
-        token: PADDLE_CLIENT_TOKEN,
-      });
+      initPaddle();
     }
   }, []);
 
   const handleCheckout = (priceId: string, tierName: string) => {
     if (!window.Paddle) {
-      alert('Paddle SDK failed to load.');
+      alert('Paddle payment gateway is loading. Please try again in a moment.');
       return;
     }
 
@@ -38,19 +49,41 @@ export default function PricingPage() {
     });
   };
 
+  const copyToClipboard = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white py-12 px-6 relative overflow-hidden">
-      {/* Background Radial Glow */}
+      {/* Load Paddle V2 CDN Script */}
+      <Script
+        src="https://cdn.paddle.com/paddle/v2/paddle.js"
+        onLoad={initPaddle}
+        strategy="afterInteractive"
+      />
+
+      {/* Background Glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[350px] bg-cyan-500/10 blur-[150px] pointer-events-none -z-10" />
 
-      {/* Top Navigation Bar / Back Button */}
-      <div className="max-w-5xl mx-auto mb-8">
+      {/* Top Bar */}
+      <div className="max-w-5xl mx-auto mb-8 flex justify-between items-center">
         <button
           onClick={() => router.back()}
           className="inline-flex items-center gap-2 text-xs font-mono text-neutral-400 hover:text-cyan-400 transition-colors bg-neutral-900/80 border border-neutral-800 px-3.5 py-2 rounded-xl backdrop-blur-md hover:border-cyan-500/30 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Back</span>
+        </button>
+
+        {/* Local Payment Trigger Button */}
+        <button
+          onClick={() => setIsPkModalOpen(true)}
+          className="inline-flex items-center gap-2 text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-4 py-2 rounded-xl hover:bg-emerald-500/20 transition-all cursor-pointer"
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>Pay via JazzCash / EasyPaisa (PK)</span>
         </button>
       </div>
 
@@ -213,6 +246,98 @@ export default function PricingPage() {
           </button>
         </div>
       </div>
+
+      {/* Pakistani Local Payment Modal */}
+      {isPkModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-md w-full p-6 relative space-y-6 text-left shadow-2xl">
+            <button
+              onClick={() => setIsPkModalOpen(false)}
+              className="absolute top-4 right-4 text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-mono mb-2">
+                Local Payment Method (PK)
+              </div>
+              <h3 className="text-xl font-bold text-white">Manual Local Payment</h3>
+              <p className="text-xs text-neutral-400 mt-1">
+                Transfer payment directly via JazzCash or EasyPaisa to activate your license manually.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {/* JazzCash Box */}
+              <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-mono text-red-400 font-bold uppercase tracking-wider block">
+                    JazzCash Account
+                  </span>
+                  <p className="text-sm font-semibold text-white mt-0.5">Muhammad Qasim</p>
+                  <p className="text-xs text-neutral-400 font-mono">03040378760</p>
+                </div>
+                <button
+                  onClick={() => copyToClipboard('03040378760', 'jazzcash')}
+                  className="p-2 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white hover:border-cyan-500/40 transition-colors cursor-pointer"
+                  title="Copy Number"
+                >
+                  {copiedField === 'jazzcash' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+
+              {/* EasyPaisa Box */}
+              <div className="p-4 rounded-xl bg-neutral-950 border border-neutral-800 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-wider block">
+                    EasyPaisa Account
+                  </span>
+                  <p className="text-sm font-semibold text-white mt-0.5">Muhammad Qasim</p>
+                  <p className="text-xs text-neutral-400 font-mono">03164621295</p>
+                </div>
+                <button
+                  onClick={() => copyToClipboard('03164621295', 'easypaisa')}
+                  className="p-2 rounded-lg bg-neutral-900 border border-neutral-800 text-neutral-300 hover:text-white hover:border-cyan-500/40 transition-colors cursor-pointer"
+                  title="Copy Number"
+                >
+                  {copiedField === 'easypaisa' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Verification Instructions */}
+            <div className="p-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20 space-y-2">
+              <h4 className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                <Send className="w-3.5 h-3.5" /> Required Verification Step:
+              </h4>
+              <p className="text-[11px] text-neutral-300 leading-relaxed">
+                After completing the payment, please send a message with:
+              </p>
+              <ul className="text-[11px] text-neutral-400 list-disc list-inside space-y-1 font-mono">
+                <li>Payment Screenshot (Receipt)</li>
+                <li>Your Account Email</li>
+                <li>Desired License Tier (Pro or Enterprise)</li>
+              </ul>
+            </div>
+
+            <button
+              onClick={() => setIsPkModalOpen(false)}
+              className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
