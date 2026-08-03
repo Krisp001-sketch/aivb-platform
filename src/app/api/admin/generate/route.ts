@@ -1,20 +1,41 @@
-// src/app/api/admin/generate/route.ts
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "../../../../lib/supabase";
 import { sendLicenseEmail } from "../../../../lib/onesignal";
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
-// Parse comma-separated emails from environment variables
-const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS?.split(",") || [
-  "muqasim444@gmail.com",
-];
+// Support both standard server ENVs and public ENVs
+const envEmails = process.env.ADMIN_EMAILS || process.env.NEXT_PUBLIC_ADMIN_EMAILS;
+const ADMIN_EMAILS = envEmails ? envEmails.split(",").map((e) => e.trim()) : ["muqasim444@gmail.com"];
 
 export async function POST(request: Request) {
   try {
-    // Server-side session verification
-    const supabase = createRouteHandlerClient({ cookies });
+    const cookieStore = await cookies();
+
+    // Initialize Supabase Server Client with @supabase/ssr
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            try {
+              cookiesToSet.forEach(({ name, value, options }) =>
+                cookieStore.set(name, value, options)
+              );
+            } catch {
+              // Ignore if called from Server Component context
+            }
+          },
+        },
+      }
+    );
+
+    // Verify authenticated user session
     const { data: { session } } = await supabase.auth.getSession();
 
     if (!session) {
@@ -45,7 +66,7 @@ export async function POST(request: Request) {
 
     const supabaseAdmin = getSupabaseAdmin();
 
-    // 1. Insert new license into Supabase
+    // Insert new license record
     const { data: newLicense, error: insertError } = await supabaseAdmin
       .from("licenses")
       .insert([
@@ -66,7 +87,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Send license email via OneSignal
+    // Dispatch email notification
     const emailResult = await sendLicenseEmail(email, generatedKey);
 
     return NextResponse.json({
