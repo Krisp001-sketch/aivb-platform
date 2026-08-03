@@ -15,13 +15,15 @@ import {
   ShieldCheck, 
   Key, 
   Laptop, 
-  ShieldAlert 
+  ShieldAlert,
+  Trash2,
+  HardDrive
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 
-const ADMIN_EMAILS = process.env.NEXT_PUBLIC_ADMIN_EMAILS?.split(",") || [
-  "muqasim444@gmail.com",
-];
+const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "muqasim444@gmail.com")
+  .split(",")
+  .map((e) => e.trim().toLowerCase());
 
 export default function AccountPage() {
   const [user, setUser] = useState<any>(null);
@@ -31,8 +33,9 @@ export default function AccountPage() {
 
   // License & Device States
   const [license, setLicense] = useState<any>(null);
-  const [devicesCount, setDevicesCount] = useState(0);
+  const [devices, setDevices] = useState<any[]>([]);
   const [licenseLoading, setLicenseLoading] = useState(true);
+  const [unbindingId, setUnbindingId] = useState<string | null>(null);
 
   // Form Fields
   const [fullName, setFullName] = useState("");
@@ -48,22 +51,23 @@ export default function AccountPage() {
         setFullName(user.user_metadata?.full_name || "");
         setDateOfBirth(user.user_metadata?.date_of_birth || "");
 
-        // Check Admin Status
-        const isEmailAllowed = user.email && ADMIN_EMAILS.includes(user.email);
+        // Case-insensitive admin check
+        const userEmail = user.email?.trim().toLowerCase();
+        const isEmailAllowed = userEmail && ADMIN_EMAILS.includes(userEmail);
         const hasAdminRole = user.user_metadata?.role === "admin";
         setIsAdmin(!!(isEmailAllowed || hasAdminRole));
 
-        // Fetch User's Active License & Registered Devices
+        // Fetch User's Active License & Detailed Bound HWID Devices
         try {
           const { data: licData } = await supabase
             .from("licenses")
-            .select("*, devices(id)")
+            .select("*, devices(*)")
             .eq("user_id", user.id)
             .maybeSingle();
 
           if (licData) {
             setLicense(licData);
-            setDevicesCount(licData.devices?.length || 0);
+            setDevices(licData.devices || []);
           }
         } catch (err) {
           console.error("Failed to fetch license details:", err);
@@ -97,6 +101,29 @@ export default function AccountPage() {
     } else {
       setUser(data.user);
       setMessage({ type: "success", text: "Profile information updated successfully!" });
+    }
+  };
+
+  const handleUnbindDevice = async (deviceId: string) => {
+    setUnbindingId(deviceId);
+    try {
+      const res = await fetch("/api/license/unbind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setDevices((prev) => prev.filter((d) => d.id !== deviceId));
+        setMessage({ type: "success", text: "Device successfully unbound!" });
+      } else {
+        setMessage({ type: "error", text: data.error || "Failed to unbind device." });
+      }
+    } catch (err) {
+      setMessage({ type: "error", text: "Network request failed while unbinding device." });
+    } finally {
+      setUnbindingId(null);
     }
   };
 
@@ -138,7 +165,7 @@ export default function AccountPage() {
         {/* Header */}
         <div className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight">Account Dashboard</h1>
-          <p className="text-xs text-textMuted">Manage your personal profile, active licenses, and system status.</p>
+          <p className="text-xs text-textMuted">Manage your personal profile, active licenses, and registered HWID devices.</p>
         </div>
 
         {/* Admin Shortcut Banner */}
@@ -184,28 +211,75 @@ export default function AccountPage() {
               <Loader2 className="w-4 h-4 animate-spin text-brandBlue" /> Checking active license records...
             </div>
           ) : license ? (
-            <div className="space-y-3 bg-background/50 p-4 rounded-lg border border-borderDark text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-textMuted">License Tier:</span>
-                <span className="font-bold text-brandBlue uppercase">{license.tier}</span>
+            <div className="space-y-4">
+              {/* License Details */}
+              <div className="space-y-3 bg-background/50 p-4 rounded-lg border border-borderDark text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-textMuted">License Tier:</span>
+                  <span className="font-bold text-brandBlue uppercase">{license.tier}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-textMuted">Serial Key:</span>
+                  <span className="font-mono text-white">{license.key}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-textMuted">Status:</span>
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-semibold text-[10px]">
+                    {license.status}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-borderDark/50">
+                  <span className="text-textMuted flex items-center gap-1.5">
+                    <Laptop className="w-3.5 h-3.5" /> Bound Devices:
+                  </span>
+                  <span className="text-white font-medium">
+                    {devices.length} / {license.max_devices} slots used
+                  </span>
+                </div>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-textMuted">Serial Key:</span>
-                <span className="font-mono text-white">{license.key}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-textMuted">Status:</span>
-                <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-semibold text-[10px]">
-                  {license.status}
-                </span>
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-borderDark/50">
-                <span className="text-textMuted flex items-center gap-1.5">
-                  <Laptop className="w-3.5 h-3.5" /> Bound Devices:
-                </span>
-                <span className="text-white font-medium">
-                  {devicesCount} / {license.max_devices} slots used
-                </span>
+
+              {/* Bound HWID Devices List */}
+              <div className="space-y-2 pt-2">
+                <p className="text-xs font-semibold text-textMuted flex items-center gap-1.5">
+                  <HardDrive className="w-3.5 h-3.5 text-brandBlue" /> Registered HWID Hardware
+                </p>
+
+                {devices.length > 0 ? (
+                  <div className="space-y-2">
+                    {devices.map((device) => (
+                      <div
+                        key={device.id}
+                        className="flex items-center justify-between bg-background/80 p-3 rounded-lg border border-borderDark text-xs"
+                      >
+                        <div className="space-y-0.5">
+                          <p className="font-mono font-medium text-white truncate max-w-[280px]">
+                            {device.hwid || device.device_name || "Hardware Device"}
+                          </p>
+                          <p className="text-[10px] text-textMuted">
+                            Registered: {new Date(device.created_at || Date.now()).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={unbindingId === device.id}
+                          onClick={() => handleUnbindDevice(device.id)}
+                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/20"
+                        >
+                          {unbindingId === device.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-textMuted italic p-3 bg-background/30 rounded-lg border border-borderDark/50 text-center">
+                    No hardware devices bound yet. Run the desktop application to auto-register this machine.
+                  </p>
+                )}
               </div>
             </div>
           ) : (
