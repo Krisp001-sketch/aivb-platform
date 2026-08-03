@@ -6,10 +6,22 @@ import { useRouter } from "next/navigation";
 import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { HWIDTable, DeviceBinding } from "../../components/admin/HWIDTable";
-import { Key, Send, ShieldAlert, CheckCircle, ArrowLeft, Shield, Loader2 } from "lucide-react";
+import { KeyGenerator } from "../../components/admin/KeyGenerator";
+import { 
+  ShieldAlert, 
+  ArrowLeft, 
+  Shield, 
+  Loader2, 
+  Search, 
+  Users, 
+  Edit2, 
+  Save, 
+  X, 
+  RefreshCw,
+  HardDrive
+} from "lucide-react";
 import { supabase } from "../../lib/supabase";
 
-// Build list with explicit fallback to prevent env var loading bugs on client
 const HARDCODED_ADMINS = ["muqasim444@gmail.com"];
 const ENV_ADMINS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "")
   .split(",")
@@ -21,42 +33,56 @@ const ADMIN_EMAILS = Array.from(new Set([...HARDCODED_ADMINS, ...ENV_ADMINS]));
 export default function AdminPage() {
   const router = useRouter();
 
-  // Auth & Admin Protection States
   const [authLoading, setAuthLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  // Form & Dashboard States
-  const [email, setEmail] = useState("");
-  const [tier, setTier] = useState("PRO");
-  const [maxDevices, setMaxDevices] = useState(3);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ success: boolean; key?: string; error?: string } | null>(null);
+  // System States
   const [devices, setDevices] = useState<DeviceBinding[]>([]);
+  const [licenses, setLicenses] = useState<any[]>([]);
   const [devicesLoading, setDevicesLoading] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
 
-  // Helper to load all active bound HWID devices across licenses
-  const fetchDevices = useCallback(async () => {
+  // Search & Edit States
+  const [searchQuery, setSearchQuery] = useState("");
+  const [editingLicenseId, setEditingLicenseId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ tier: string; status: string; max_devices: number }>({
+    tier: "PRO",
+    status: "ACTIVE",
+    max_devices: 3,
+  });
+
+  const fetchData = useCallback(async () => {
     setDevicesLoading(true);
+    setUsersLoading(true);
     try {
-      const { data, error } = await supabase
+      // 1. Fetch Active Devices with Linked Licenses
+      const { data: devData, error: devError } = await supabase
         .from("devices")
         .select("*, licenses(key, tier, user_id)")
         .order("created_at", { ascending: false });
 
-      if (error) {
-        console.error("Supabase device fetch error:", error.message);
-      } else if (data) {
-        setDevices(data as unknown as DeviceBinding[]);
+      if (!devError && devData) {
+        setDevices(devData as unknown as DeviceBinding[]);
+      }
+
+      // 2. Fetch Licenses for User Management Table
+      const { data: licData, error: licError } = await supabase
+        .from("licenses")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (!licError && licData) {
+        setLicenses(licData);
       }
     } catch (err) {
-      console.error("Error loading bound devices:", err);
+      console.error("Error loading administration metrics:", err);
     } finally {
       setDevicesLoading(false);
+      setUsersLoading(false);
     }
   }, []);
 
-  // Protect Route & Load Data On Mount
   useEffect(() => {
     async function checkAdminAndLoadData() {
       const { data: { user } } = await supabase.auth.getUser();
@@ -68,22 +94,14 @@ export default function AdminPage() {
 
       setCurrentUser(user);
 
-      // Normalized Case-Insensitive Check
       const userEmail = user.email?.trim().toLowerCase();
       const isEmailAllowed = !!(userEmail && ADMIN_EMAILS.includes(userEmail));
       const hasAdminRole =
         user.user_metadata?.role === "admin" || user.app_metadata?.role === "admin";
 
-      console.log("[Admin Verification Debug]:", {
-        userEmail,
-        ADMIN_EMAILS,
-        isEmailAllowed,
-        hasAdminRole,
-      });
-
       if (isEmailAllowed || hasAdminRole) {
         setIsAdmin(true);
-        await fetchDevices(); // Fetch devices once verified as admin
+        await fetchData();
       } else {
         setIsAdmin(false);
       }
@@ -92,34 +110,7 @@ export default function AdminPage() {
     }
 
     checkAdminAndLoadData();
-  }, [router, fetchDevices]);
-
-  const handleGenerateKey = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setResult(null);
-
-    try {
-      const res = await fetch("/api/admin/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, tier, max_devices: maxDevices }),
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        setResult({ success: true, key: data.license?.key || data.key });
-        setEmail("");
-        fetchDevices(); // Refresh hardware device list
-      } else {
-        setResult({ success: false, error: data.error || "Failed to generate key." });
-      }
-    } catch (err) {
-      setResult({ success: false, error: "Network request failed." });
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [router, fetchData]);
 
   const handleUnbindDevice = async (deviceId: string) => {
     try {
@@ -129,17 +120,62 @@ export default function AdminPage() {
         body: JSON.stringify({ device_id: deviceId }),
       });
       const data = await res.json();
-      if (data.success) {
+      if (data.success || res.ok) {
         setDevices((prev) => prev.filter((d) => d.id !== deviceId));
       } else {
-        console.error("Unbind failed:", data.error);
+        console.error("Unbind failed:", data.error || data.message);
       }
     } catch (err) {
       console.error("Failed to unbind device:", err);
     }
   };
 
-  // 1. Show Auth Loading Spinner
+  const startEditLicense = (lic: any) => {
+    setEditingLicenseId(lic.id);
+    setEditForm({
+      tier: lic.tier || "PRO",
+      status: lic.status || "ACTIVE",
+      max_devices: lic.max_devices || 3,
+    });
+  };
+
+  const saveLicenseChanges = async (licenseId: string) => {
+    try {
+      const { error } = await supabase
+        .from("licenses")
+        .update({
+          tier: editForm.tier,
+          status: editForm.status,
+          max_devices: editForm.max_devices,
+        })
+        .eq("id", licenseId);
+
+      if (!error) {
+        setLicenses((prev) =>
+          prev.map((item) =>
+            item.id === licenseId ? { ...item, ...editForm } : item
+          )
+        );
+        setEditingLicenseId(null);
+      } else {
+        console.error("Failed to update license:", error.message);
+      }
+    } catch (err) {
+      console.error("Error updating license:", err);
+    }
+  };
+
+  // Filter Licenses/Users by Search Query
+  const filteredLicenses = licenses.filter((lic) => {
+    const q = searchQuery.toLowerCase().trim();
+    return (
+      (lic.key && lic.key.toLowerCase().includes(q)) ||
+      (lic.user_id && lic.user_id.toLowerCase().includes(q)) ||
+      (lic.tier && lic.tier.toLowerCase().includes(q)) ||
+      (lic.status && lic.status.toLowerCase().includes(q))
+    );
+  });
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background text-white flex items-center justify-center">
@@ -148,7 +184,6 @@ export default function AdminPage() {
     );
   }
 
-  // 2. Access Denied Screen for Non-Admins
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-background text-white flex items-center justify-center px-6">
@@ -172,12 +207,9 @@ export default function AdminPage() {
     );
   }
 
-  // 3. Protected Admin Interface
   return (
     <div className="min-h-screen bg-background text-white px-6 py-12">
       <div className="max-w-6xl mx-auto space-y-8">
-        
-        {/* Navigation & Header */}
         <div className="space-y-1">
           <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-textMuted hover:text-white mb-2">
             <ArrowLeft className="w-3.5 h-3.5" /> Back to Ecosystem
@@ -186,105 +218,175 @@ export default function AdminPage() {
             <Shield className="w-7 h-7 text-brandBlue" /> Licensing Admin Control
           </h1>
           <p className="text-textMuted text-sm">
-            Generate new serial keys, set device limits, inspect HWID device registrations, and send automated emails.
+            Generate serial keys, manage user accounts, update max device limits, and inspect active HWID nodes.
           </p>
         </div>
 
-        {/* Dashboard Operations Grid */}
+        {/* Top Control Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          
-          {/* Key Generation Section */}
           <div className="lg:col-span-1 space-y-6">
-            <Card className="space-y-6">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Key className="w-4 h-4 text-brandBlue" /> Rapid Key Generator
-              </h3>
-
-              <form onSubmit={handleGenerateKey} className="space-y-5">
-                <div>
-                  <label className="block text-xs font-semibold text-textMuted mb-2">
-                    Customer Email Address
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="customer@domain.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-background border border-borderDark rounded-lg px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brandBlue"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-textMuted mb-2">License Tier</label>
-                    <select
-                      value={tier}
-                      onChange={(e) => setTier(e.target.value)}
-                      className="w-full bg-background border border-borderDark rounded-lg px-3 py-2.5 text-xs text-white focus:outline-none focus:border-brandBlue"
-                    >
-                      <option value="TRIAL">Trial (1 Device / 24 hrs)</option>
-                      <option value="PRO">Pro (3 Devices Standard)</option>
-                      <option value="LIFETIME">Enterprise / Lifetime</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-textMuted mb-2">Max Devices</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={maxDevices}
-                      onChange={(e) => setMaxDevices(parseInt(e.target.value) || 1)}
-                      className="w-full bg-background border border-borderDark rounded-lg px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brandBlue"
-                    />
-                  </div>
-                </div>
-
-                <Button
-                  variant="primary"
-                  size="md"
-                  disabled={loading}
-                  icon={<Send className="w-4 h-4" />}
-                  className="w-full"
-                >
-                  {loading ? "Generating & Sending..." : "Issue License & Dispatch Email"}
-                </Button>
-              </form>
-
-              {/* Status Banner */}
-              {result && (
-                <div className={`p-4 rounded-lg border text-xs flex items-center gap-3 ${
-                  result.success ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-red-500/10 border-red-500/30 text-red-400"
-                }`}>
-                  {result.success ? <CheckCircle className="w-5 h-5 shrink-0" /> : <ShieldAlert className="w-5 h-5 shrink-0" />}
-                  <div>
-                    {result.success ? (
-                      <>
-                        <p className="font-bold">License Key Successfully Issued!</p>
-                        <p className="font-mono mt-1 text-white">{result.key}</p>
-                      </>
-                    ) : (
-                      <p className="font-bold">{result.error}</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </Card>
+            <KeyGenerator onSuccess={fetchData} />
           </div>
 
-          {/* HWID Device Manager Section */}
           <div className="lg:col-span-2 space-y-4">
             <h2 className="text-base font-bold text-white flex items-center justify-between">
-              <span>Active System Devices</span>
+              <span className="flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-brandBlue" /> Active Bound Devices
+              </span>
               {devicesLoading && <Loader2 className="w-4 h-4 animate-spin text-brandBlue" />}
             </h2>
             <HWIDTable devices={devices} onUnbind={handleUnbindDevice} />
           </div>
-
         </div>
 
+        {/* User Account & License Management Table */}
+        <Card className="p-6 border-borderDark space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-borderDark/60 pb-4">
+            <div className="space-y-1">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Users className="w-4.5 h-4.5 text-brandBlue" /> User & License Database
+              </h2>
+              <p className="text-xs text-textMuted">Search accounts, alter license tiers, or adjust hardware allowances.</p>
+            </div>
+
+            {/* Live Search Input */}
+            <div className="relative w-full sm:w-72">
+              <Search className="w-4 h-4 text-textMuted absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search by key, user ID, tier..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-background border border-borderDark rounded-lg pl-9 pr-4 py-1.5 text-xs text-white focus:outline-none focus:border-brandBlue"
+              />
+            </div>
+          </div>
+
+          {usersLoading ? (
+            <div className="flex items-center justify-center py-8 text-xs text-textMuted gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-brandBlue" /> Querying license database...
+            </div>
+          ) : filteredLicenses.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-borderDark text-textMuted uppercase text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Serial Key</th>
+                    <th className="py-2.5 px-3">User ID</th>
+                    <th className="py-2.5 px-3">Tier</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Max Slots</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-borderDark/50">
+                  {filteredLicenses.map((lic) => {
+                    const isEditing = editingLicenseId === lic.id;
+                    return (
+                      <tr key={lic.id} className="hover:bg-background/50 transition-colors">
+                        <td className="py-3 px-3 font-mono text-white font-medium select-all">
+                          {lic.key}
+                        </td>
+                        <td className="py-3 px-3 text-textMuted font-mono truncate max-w-[140px]">
+                          {lic.user_id || "Unassigned"}
+                        </td>
+                        <td className="py-3 px-3">
+                          {isEditing ? (
+                            <select
+                              value={editForm.tier}
+                              onChange={(e) => setEditForm({ ...editForm, tier: e.target.value })}
+                              className="bg-background border border-borderDark text-white text-xs rounded px-2 py-1"
+                            >
+                              <option value="FREE">FREE</option>
+                              <option value="PRO">PRO</option>
+                              <option value="ENTERPRISE">ENTERPRISE</option>
+                            </select>
+                          ) : (
+                            <span className="font-semibold text-brandBlue uppercase">{lic.tier}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3">
+                          {isEditing ? (
+                            <select
+                              value={editForm.status}
+                              onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                              className="bg-background border border-borderDark text-white text-xs rounded px-2 py-1"
+                            >
+                              <option value="ACTIVE">ACTIVE</option>
+                              <option value="SUSPENDED">SUSPENDED</option>
+                              <option value="EXPIRED">EXPIRED</option>
+                            </select>
+                          ) : (
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                lic.status === "ACTIVE"
+                                  ? "bg-emerald-500/10 text-emerald-400"
+                                  : "bg-red-500/10 text-red-400"
+                              }`}
+                            >
+                              {lic.status}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3">
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min="1"
+                              max="20"
+                              value={editForm.max_devices}
+                              onChange={(e) =>
+                                setEditForm({ ...editForm, max_devices: parseInt(e.target.value) || 1 })
+                              }
+                              className="w-16 bg-background border border-borderDark text-white text-xs rounded px-2 py-1"
+                            />
+                          ) : (
+                            <span className="text-white font-medium">{lic.max_devices} Devices</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          {isEditing ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={() => saveLicenseChanges(lic.id)}
+                                className="p-1.5 h-auto text-[10px]"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setEditingLicenseId(null)}
+                                className="p-1.5 h-auto text-[10px]"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => startEditLicense(lic)}
+                              className="p-1.5 h-auto text-[10px]"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-xs text-textMuted italic text-center py-6">
+              No matching accounts or license records found in database.
+            </p>
+          )}
+        </Card>
       </div>
     </div>
   );

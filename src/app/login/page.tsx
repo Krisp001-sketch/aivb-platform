@@ -59,7 +59,7 @@ export default function LoginPage() {
         });
 
         if (error) throw error;
-        router.push("/account");
+        router.push("/");
       } else if (mode === "forgot") {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${window.location.origin}/login`,

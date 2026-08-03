@@ -12,71 +12,118 @@ import {
   Loader2, 
   CheckCircle2, 
   AlertCircle, 
-  ShieldCheck, 
   Key, 
   Laptop, 
   ShieldAlert,
   Trash2,
-  HardDrive
+  HardDrive,
+  Plus
 } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 
-const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "muqasim444@gmail.com")
-  .split(",")
-  .map((e) => e.trim().toLowerCase());
+// Helper function to generate/detect a live browser-based HWID fingerprint
+async function fetchClientHWID(): Promise<{ hwid: string; deviceName: string }> {
+  try {
+    const screenRes = `${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}`;
+    const userAgent = navigator.userAgent;
+    const language = navigator.language;
+    const platform = (navigator as any).userAgentData?.platform || navigator.platform || "Unknown OS";
+    const cores = navigator.hardwareConcurrency || 4;
+
+    const rawFingerprint = `${platform}-${screenRes}-${cores}-${language}-${userAgent}`;
+
+    // Hash the combined device metrics to produce a clean 32-character HWID string
+    const encoder = new TextEncoder();
+    const data = encoder.encode(rawFingerprint);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+
+    const hwid = `HWID-${hashHex.substring(0, 24).toUpperCase()}`;
+    const deviceName = `${platform} Desktop (${window.screen.width}x${window.screen.height})`;
+
+    return { hwid, deviceName };
+  } catch (err) {
+    // Fallback ID if browser crypto APIs are restricted
+    const fallbackId = `HWID-GENERIC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+    return { hwid: fallbackId, deviceName: "Web Workstation" };
+  }
+}
 
 export default function AccountPage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
 
   // License & Device States
   const [license, setLicense] = useState<any>(null);
   const [devices, setDevices] = useState<any[]>([]);
   const [licenseLoading, setLicenseLoading] = useState(true);
   const [unbindingId, setUnbindingId] = useState<string | null>(null);
+  
+  // Live HWID States
+  const [currentHwid, setCurrentHwid] = useState<string | null>(null);
+  const [currentDeviceName, setCurrentDeviceName] = useState<string>("");
+  const [bindingDevice, setBindingDevice] = useState(false);
 
-  // Form Fields
+  // Profile Form States
   const [fullName, setFullName] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     async function loadAccountData() {
-      const { data: { user } } = await supabase.auth.getUser();
+      try {
+        // Detect Live HWID on Component Mount
+        const liveInfo = await fetchClientHWID();
+        setCurrentHwid(liveInfo.hwid);
+        setCurrentDeviceName(liveInfo.deviceName);
 
-      if (user) {
-        setUser(user);
-        setFullName(user.user_metadata?.full_name || "");
-        setDateOfBirth(user.user_metadata?.date_of_birth || "");
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
 
-        // Case-insensitive admin check
-        const userEmail = user.email?.trim().toLowerCase();
-        const isEmailAllowed = userEmail && ADMIN_EMAILS.includes(userEmail);
-        const hasAdminRole = user.user_metadata?.role === "admin";
-        setIsAdmin(!!(isEmailAllowed || hasAdminRole));
+        if (userError) {
+          console.error("Auth status error:", userError.message);
+          setLoading(false);
+          setLicenseLoading(false);
+          return;
+        }
 
-        // Fetch User's Active License & Detailed Bound HWID Devices
-        try {
-          const { data: licData } = await supabase
+        if (user) {
+          setUser(user);
+          setFullName(user.user_metadata?.full_name || "");
+          setDateOfBirth(user.user_metadata?.date_of_birth || "");
+
+          // Fetch user's license
+          const { data: licData, error: licError } = await supabase
             .from("licenses")
-            .select("*, devices(*)")
+            .select("*")
             .eq("user_id", user.id)
             .maybeSingle();
 
-          if (licData) {
+          if (licError) {
+            console.error("Supabase Licenses Query Failed:", licError);
+          } else if (licData) {
             setLicense(licData);
-            setDevices(licData.devices || []);
-          }
-        } catch (err) {
-          console.error("Failed to fetch license details:", err);
-        } finally {
-          setLicenseLoading(false);
-        }
-      }
 
-      setLoading(false);
+            // Fetch bound devices for the license
+            const { data: devData, error: devError } = await supabase
+              .from("devices")
+              .select("*")
+              .eq("license_id", licData.id);
+
+            if (devError) {
+              console.error("Supabase Devices Query Failed:", devError);
+            } else {
+              setDevices(devData || []);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error("Unexpected failure loading account data:", err?.message || err);
+      } finally {
+        setLoading(false);
+        setLicenseLoading(false);
+      }
     }
 
     loadAccountData();
@@ -100,28 +147,81 @@ export default function AccountPage() {
       setMessage({ type: "error", text: error.message });
     } else {
       setUser(data.user);
-      setMessage({ type: "success", text: "Profile information updated successfully!" });
+      setMessage({ type: "success", text: "Profile details successfully updated!" });
+    }
+  };
+
+  const handleBindCurrentDevice = async () => {
+    if (!license || !currentHwid) return;
+    setBindingDevice(true);
+    setMessage(null);
+
+    // Check device limit
+    if (devices.length >= (license.max_devices || 1)) {
+      setMessage({
+        type: "error",
+        text: `Maximum device limit reached (${license.max_devices}). Unbind an existing device first.`,
+      });
+      setBindingDevice(false);
+      return;
+    }
+
+    // Check if current device is already bound
+    const isAlreadyBound = devices.some((d) => d.hwid === currentHwid);
+    if (isAlreadyBound) {
+      setMessage({ type: "error", text: "This machine is already registered and bound to your license." });
+      setBindingDevice(false);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("devices")
+        .insert({
+          license_id: license.id,
+          hwid: currentHwid,
+          device_name: currentDeviceName,
+          activated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) {
+        setMessage({ type: "error", text: error.message || "Failed to bind device." });
+      } else {
+        setDevices((prev) => [...prev, data]);
+        setMessage({ type: "success", text: "Current machine bound to license successfully!" });
+      }
+    } catch (err: any) {
+      setMessage({ type: "error", text: "An error occurred while attempting to bind hardware." });
+    } finally {
+      setBindingDevice(false);
     }
   };
 
   const handleUnbindDevice = async (deviceId: string) => {
     setUnbindingId(deviceId);
+    setMessage(null);
+
     try {
       const res = await fetch("/api/license/unbind", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id: deviceId }),
+        body: JSON.stringify({ 
+          device_id: deviceId,
+          license_key: license?.key || null 
+        }),
       });
 
       const data = await res.json();
-      if (data.success) {
+      if (data.success || res.ok) {
         setDevices((prev) => prev.filter((d) => d.id !== deviceId));
-        setMessage({ type: "success", text: "Device successfully unbound!" });
+        setMessage({ type: "success", text: "Device unbound successfully!" });
       } else {
-        setMessage({ type: "error", text: data.error || "Failed to unbind device." });
+        setMessage({ type: "error", text: data.error || data.message || "Failed to unbind hardware device." });
       }
     } catch (err) {
-      setMessage({ type: "error", text: "Network request failed while unbinding device." });
+      setMessage({ type: "error", text: "Network error encountered while unbinding device." });
     } finally {
       setUnbindingId(null);
     }
@@ -139,7 +239,7 @@ export default function AccountPage() {
     return (
       <div className="min-h-screen bg-background text-white flex items-center justify-center px-6">
         <Card className="p-8 text-center space-y-4 max-w-sm w-full border-borderDark">
-          <p className="text-xs text-textMuted">You are not logged in.</p>
+          <p className="text-xs text-textMuted">You must be logged in to view your account details.</p>
           <Link href="/login">
             <Button variant="primary" className="w-full">
               Go to Login Page
@@ -150,43 +250,23 @@ export default function AccountPage() {
     );
   }
 
+  const isCurrentDeviceBound = devices.some((d) => d.hwid === currentHwid);
+
   return (
     <div className="min-h-screen bg-background text-white px-6 py-12">
       <div className="max-w-2xl mx-auto space-y-6">
-        
-        {/* Navigation */}
         <Link
           href="/"
           className="inline-flex items-center gap-1.5 text-xs text-textMuted hover:text-white transition-colors"
         >
-          <ArrowLeft className="w-3.5 h-3.5" /> Back to Ecosystem
+          <ArrowLeft className="w-3.5 h-3.5" /> Back to Dashboard
         </Link>
 
-        {/* Header */}
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">Account Dashboard</h1>
-          <p className="text-xs text-textMuted">Manage your personal profile, active licenses, and registered HWID devices.</p>
+          <h1 className="text-2xl font-bold tracking-tight">Account Settings</h1>
+          <p className="text-xs text-textMuted">Manage your personal details, software licenses, and registered HWID instances.</p>
         </div>
 
-        {/* Admin Shortcut Banner */}
-        {isAdmin && (
-          <Card className="p-4 bg-brandBlue/10 border-brandBlue/30 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="w-5 h-5 text-brandBlue shrink-0" />
-              <div>
-                <p className="text-xs font-bold text-white">Administrator Access Detected</p>
-                <p className="text-[11px] text-textMuted">You have elevated rights to manage license keys and HWIDs.</p>
-              </div>
-            </div>
-            <Link href="/admin">
-              <Button variant="primary" size="sm">
-                Open Admin Control
-              </Button>
-            </Link>
-          </Card>
-        )}
-
-        {/* Feedback Messages */}
         {message && (
           <div
             className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
@@ -195,32 +275,35 @@ export default function AccountPage() {
                 : "bg-red-500/10 border border-red-500/20 text-red-400"
             }`}
           >
-            {message.type === "success" ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+            {message.type === "success" ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0" />
+            )}
             <span>{message.text}</span>
           </div>
         )}
 
-        {/* 1. License & Activation Status Card */}
+        {/* License & HWID Card */}
         <Card className="p-6 border-borderDark space-y-4">
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
-            <Key className="w-4 h-4 text-brandBlue" /> License & Device Status
+            <Key className="w-4 h-4 text-brandBlue" /> License & Registered Hardware
           </h2>
 
           {licenseLoading ? (
-            <div className="flex items-center gap-2 text-xs text-textMuted">
-              <Loader2 className="w-4 h-4 animate-spin text-brandBlue" /> Checking active license records...
+            <div className="flex items-center gap-2 text-xs text-textMuted py-4">
+              <Loader2 className="w-4 h-4 animate-spin text-brandBlue" /> Fetching active license entitlements...
             </div>
           ) : license ? (
             <div className="space-y-4">
-              {/* License Details */}
               <div className="space-y-3 bg-background/50 p-4 rounded-lg border border-borderDark text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-textMuted">License Tier:</span>
+                  <span className="text-textMuted">Tier:</span>
                   <span className="font-bold text-brandBlue uppercase">{license.tier}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-textMuted">Serial Key:</span>
-                  <span className="font-mono text-white">{license.key}</span>
+                  <span className="font-mono text-white select-all">{license.key}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-textMuted">Status:</span>
@@ -230,54 +313,102 @@ export default function AccountPage() {
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-borderDark/50">
                   <span className="text-textMuted flex items-center gap-1.5">
-                    <Laptop className="w-3.5 h-3.5" /> Bound Devices:
+                    <Laptop className="w-3.5 h-3.5" /> Hardware Usage:
                   </span>
                   <span className="text-white font-medium">
-                    {devices.length} / {license.max_devices} slots used
+                    {devices.length} / {license.max_devices} slots registered
                   </span>
                 </div>
               </div>
 
-              {/* Bound HWID Devices List */}
+              {/* Active Machine Live HWID Banner */}
+              <div className="p-3 bg-brandBlue/5 border border-brandBlue/20 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-brandBlue uppercase tracking-wider flex items-center gap-1.5">
+                    <HardDrive className="w-3.5 h-3.5" /> Current Machine HWID
+                  </span>
+                  <span className="text-[10px] text-textMuted">
+                    {isCurrentDeviceBound ? (
+                      <span className="text-emerald-400 font-semibold">● Registered</span>
+                    ) : (
+                      <span className="text-amber-400 font-semibold">● Unbound</span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <code className="text-xs font-mono text-white bg-background/80 px-2 py-1 rounded border border-borderDark truncate max-w-[70%]">
+                    {currentHwid || "Detecting Hardware..."}
+                  </code>
+                  {!isCurrentDeviceBound && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={bindingDevice || devices.length >= license.max_devices}
+                      onClick={handleBindCurrentDevice}
+                      className="text-[11px] py-1 px-2.5 h-auto flex items-center gap-1"
+                    >
+                      {bindingDevice ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <>
+                          <Plus className="w-3 h-3" /> Bind Device
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Bound Devices List */}
               <div className="space-y-2 pt-2">
                 <p className="text-xs font-semibold text-textMuted flex items-center gap-1.5">
-                  <HardDrive className="w-3.5 h-3.5 text-brandBlue" /> Registered HWID Hardware
+                  <HardDrive className="w-3.5 h-3.5 text-brandBlue" /> Bound Devices List
                 </p>
 
                 {devices.length > 0 ? (
                   <div className="space-y-2">
-                    {devices.map((device) => (
-                      <div
-                        key={device.id}
-                        className="flex items-center justify-between bg-background/80 p-3 rounded-lg border border-borderDark text-xs"
-                      >
-                        <div className="space-y-0.5">
-                          <p className="font-mono font-medium text-white truncate max-w-[280px]">
-                            {device.hwid || device.device_name || "Hardware Device"}
-                          </p>
-                          <p className="text-[10px] text-textMuted">
-                            Registered: {new Date(device.created_at || Date.now()).toLocaleDateString()}
-                          </p>
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={unbindingId === device.id}
-                          onClick={() => handleUnbindDevice(device.id)}
-                          className="text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/20"
+                    {devices.map((device) => {
+                      const isThisDevice = device.hwid === currentHwid;
+                      return (
+                        <div
+                          key={device.id}
+                          className={`flex items-center justify-between bg-background/80 p-3 rounded-lg border text-xs ${
+                            isThisDevice ? "border-brandBlue/50 bg-brandBlue/5" : "border-borderDark"
+                          }`}
                         >
-                          {unbindingId === device.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                        </Button>
-                      </div>
-                    ))}
+                          <div className="space-y-0.5 max-w-[75%]">
+                            <p className="font-mono font-medium text-white truncate flex items-center gap-1.5">
+                              {device.hwid || device.device_name}
+                              {isThisDevice && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-brandBlue/20 text-brandBlue border border-brandBlue/30">
+                                  This Machine
+                                </span>
+                              )}
+                            </p>
+                            <p className="text-[10px] text-textMuted">
+                              Bound on: {new Date(device.activated_at || device.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={unbindingId === device.id}
+                            onClick={() => handleUnbindDevice(device.id)}
+                            className="text-red-400 hover:text-red-300 hover:bg-red-500/10 border-red-500/20"
+                          >
+                            {unbindingId === device.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                          </Button>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-xs text-textMuted italic p-3 bg-background/30 rounded-lg border border-borderDark/50 text-center">
-                    No hardware devices bound yet. Run the desktop application to auto-register this machine.
+                    No hardware devices currently bound. Click "Bind Device" above to register this machine.
                   </p>
                 )}
               </div>
@@ -286,25 +417,25 @@ export default function AccountPage() {
             <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-3">
               <ShieldAlert className="w-5 h-5 text-red-400 shrink-0" />
               <div className="text-xs">
-                <p className="font-bold text-white">No Active Software License Bound</p>
+                <p className="font-bold text-white">No Active License Found</p>
                 <p className="text-textMuted text-[11px] mt-0.5">
-                  Contact support or generate a license key from the admin portal to unlock software capabilities.
+                  Your account does not have a license attached. Please activate a key to bind hardware devices.
                 </p>
               </div>
             </div>
           )}
         </Card>
 
-        {/* 2. Personal Information Update Form */}
+        {/* User Profile Form */}
         <Card className="p-8 border-borderDark space-y-6">
           <div className="space-y-1">
-            <h2 className="text-sm font-bold text-white">Personal Profile</h2>
-            <p className="text-xs text-textMuted">Update your registered name and account details.</p>
+            <h2 className="text-sm font-bold text-white">Profile Details</h2>
+            <p className="text-xs text-textMuted">Update your baseline account metadata.</p>
           </div>
 
           <form onSubmit={handleUpdate} className="space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-textMuted">Email Address (Read Only)</label>
+              <label className="text-xs font-semibold text-textMuted">Email Address</label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-textMuted absolute left-3 top-3" />
                 <input
@@ -352,7 +483,6 @@ export default function AccountPage() {
             </div>
           </form>
         </Card>
-
       </div>
     </div>
   );

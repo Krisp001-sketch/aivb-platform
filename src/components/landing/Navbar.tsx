@@ -2,22 +2,44 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sparkles, User, LogIn, Menu, X, LogOut } from "lucide-react";
+import { Sparkles, User, LogIn, Menu, X, LogOut, Shield } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+
+const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || "muqasim444@gmail.com")
+  .split(",")
+  .map((e) => e.trim().toLowerCase());
 
 export function Navbar() {
   const [user, setUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const checkAdminStatus = (currentUser: any) => {
+    if (!currentUser) {
+      setIsAdmin(false);
+      return;
+    }
+    const userEmail = currentUser.email?.trim().toLowerCase();
+    const isEmailAllowed = !!(userEmail && ADMIN_EMAILS.includes(userEmail));
+    const hasAdminRole =
+      currentUser.user_metadata?.role === "admin" || currentUser.app_metadata?.role === "admin";
+    
+    setIsAdmin(isEmailAllowed || hasAdminRole);
+  };
 
   useEffect(() => {
     // 1. Fetch initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      checkAdminStatus(currentUser);
     });
 
     // 2. Listen for auth changes (login/logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+      checkAdminStatus(currentUser);
     });
 
     return () => subscription.unsubscribe();
@@ -59,6 +81,16 @@ export function Navbar() {
           <Link href="/downloads" className="hover:text-white transition-colors">
             Download
           </Link>
+
+          {/* Dynamic Admin Link on Main Bar */}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="flex items-center gap-1.5 text-cyan-400 font-semibold hover:text-cyan-300 transition-colors bg-cyan-500/10 px-3 py-1 rounded-lg border border-cyan-500/30"
+            >
+              <Shield className="w-4 h-4" /> Admin
+            </Link>
+          )}
         </div>
 
         {/* Dynamic Auth Button */}
@@ -117,6 +149,16 @@ export function Navbar() {
           <Link href="/downloads" className="block text-sm text-neutral-400 hover:text-white py-1">
             Download
           </Link>
+          
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="flex items-center gap-2 text-sm text-cyan-400 font-semibold py-1.5 px-3 bg-cyan-500/10 rounded-lg border border-cyan-500/30 w-fit"
+            >
+              <Shield className="w-4 h-4" /> Admin Portal
+            </Link>
+          )}
+
           <div className="pt-3 border-t border-white/10">
             {user ? (
               <Link

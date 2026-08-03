@@ -1,117 +1,126 @@
-// src/components/admin/KeyGenerator.tsx
 "use client";
 
 import React, { useState } from "react";
-import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { Send, CheckCircle, ShieldAlert } from "lucide-react";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { Key, Send, CheckCircle, ShieldAlert } from "lucide-react";
 
-export function KeyGenerator() {
+interface KeyGeneratorProps {
+  onSuccess?: () => void;
+}
+
+export function KeyGenerator({ onSuccess }: KeyGeneratorProps) {
   const [email, setEmail] = useState("");
   const [tier, setTier] = useState("PRO");
   const [maxDevices, setMaxDevices] = useState(3);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [result, setResult] = useState<{ success: boolean; key?: string; error?: string } | null>(null);
 
-  const handleGenerate = async (e: React.FormEvent) => {
+  const handleGenerateKey = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setStatus(null);
+    setResult(null);
 
     try {
-      const response = await fetch("/api/admin/generate", {
+      const res = await fetch("/api/admin/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, tier, max_devices: maxDevices }),
       });
-
-      const data = await response.json();
+      const data = await res.json();
 
       if (data.success) {
-        setStatus({
-          success: true,
-          message: `Issued Key: ${data.license.key} (Sent to ${email})`,
-        });
+        setResult({ success: true, key: data.license?.key || data.key });
         setEmail("");
+        if (onSuccess) onSuccess();
       } else {
-        setStatus({ success: false, message: data.error || "Failed to generate key." });
+        setResult({ success: false, error: data.error || "Failed to generate key." });
       }
     } catch (err) {
-      setStatus({ success: false, message: "Network connection error." });
+      setResult({ success: false, error: "Network request failed." });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Card className="space-y-4">
-      <h3 className="text-base font-bold text-white">Generate Serial Key</h3>
-      
-      <form onSubmit={handleGenerate} className="space-y-4">
+    <Card className="space-y-6">
+      <h3 className="text-base font-bold text-white flex items-center gap-2">
+        <Key className="w-4 h-4 text-brandBlue" /> Rapid Key Generator
+      </h3>
+
+      <form onSubmit={handleGenerateKey} className="space-y-5">
         <div>
-          <label className="block text-xs text-textMuted mb-1">Customer Email</label>
+          <label className="block text-xs font-semibold text-textMuted mb-2">
+            Customer Email Address
+          </label>
           <input
             type="email"
             required
+            placeholder="customer@domain.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="user@example.com"
-            className="w-full bg-background border border-borderDark rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brandBlue"
+            className="w-full bg-background border border-borderDark rounded-lg px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brandBlue"
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-textMuted mb-1">Tier</label>
+            <label className="block text-xs font-semibold text-textMuted mb-2">License Tier</label>
             <select
               value={tier}
               onChange={(e) => setTier(e.target.value)}
-              className="w-full bg-background border border-borderDark rounded-lg px-2 py-2 text-xs text-white focus:outline-none focus:border-brandBlue"
+              className="w-full bg-background border border-borderDark rounded-lg px-3 py-2.5 text-xs text-white focus:outline-none focus:border-brandBlue"
             >
-              <option value="TRIAL">TRIAL</option>
-              <option value="PRO">PRO</option>
-              <option value="ENTERPRISE">ENTERPRISE</option>
+              <option value="TRIAL">Trial (1 Device)</option>
+              <option value="PRO">Pro (3 Devices)</option>
+              <option value="LIFETIME">Enterprise / Lifetime</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-xs text-textMuted mb-1">Max Devices</label>
+            <label className="block text-xs font-semibold text-textMuted mb-2">Max Devices</label>
             <input
               type="number"
               min="1"
               max="10"
               value={maxDevices}
-              onChange={(e) => setMaxDevices(Number(e.target.value))}
-              className="w-full bg-background border border-borderDark rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-brandBlue"
+              onChange={(e) => setMaxDevices(parseInt(e.target.value) || 1)}
+              className="w-full bg-background border border-borderDark rounded-lg px-4 py-2.5 text-xs text-white focus:outline-none focus:border-brandBlue"
             />
           </div>
         </div>
 
         <Button
           variant="primary"
-          size="sm"
+          size="md"
           disabled={loading}
-          icon={<Send className="w-3.5 h-3.5" />}
+          icon={<Send className="w-4 h-4" />}
           className="w-full"
         >
-          {loading ? "Generating..." : "Generate & Dispatch"}
+          {loading ? "Generating & Binding..." : "Issue License & Dispatch Email"}
         </Button>
       </form>
 
-      {status && (
+      {result && (
         <div
-          className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
-            status.success
-              ? "bg-brandGreen/10 border-brandGreen/30 text-brandGreen"
+          className={`p-4 rounded-lg border text-xs flex items-center gap-3 ${
+            result.success
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
               : "bg-red-500/10 border-red-500/30 text-red-400"
           }`}
         >
-          {status.success ? (
-            <CheckCircle className="w-4 h-4 shrink-0" />
-          ) : (
-            <ShieldAlert className="w-4 h-4 shrink-0" />
-          )}
-          <span className="font-mono text-[11px]">{status.message}</span>
+          {result.success ? <CheckCircle className="w-5 h-5 shrink-0" /> : <ShieldAlert className="w-5 h-5 shrink-0" />}
+          <div>
+            {result.success ? (
+              <>
+                <p className="font-bold">License Key Successfully Issued!</p>
+                <p className="font-mono mt-1 text-white">{result.key}</p>
+              </>
+            ) : (
+              <p className="font-bold">{result.error}</p>
+            )}
+          </div>
         </div>
       )}
     </Card>

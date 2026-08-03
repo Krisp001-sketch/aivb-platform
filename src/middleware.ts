@@ -1,24 +1,59 @@
-// src/middleware.ts
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server"; // Updated import path
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
 
-export function middleware(req: NextRequest) {
-  const { pathname } = req.nextUrl;
+const ADMIN_EMAILS = ["muqasim444@gmail.com"];
 
-  // Protect /admin routes
-  if (pathname.startsWith("/admin")) {
-    const authHeader = req.headers.get("authorization");
+export async function middleware(request: NextRequest) {
+  let response = NextResponse.next({
+    request: { headers: request.headers },
+  });
 
-    // Secret Key Check (Set ADMIN_SECRET_KEY in your .env.local file)
-    const adminSecret = process.env.ADMIN_SECRET_KEY || "aivb-admin-secret-2026";
-    const querySecret = req.nextUrl.searchParams.get("secret");
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          );
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
 
-    if (querySecret !== adminSecret && authHeader !== `Bearer ${adminSecret}`) {
-      return new NextResponse("Unauthorized Access to Admin Panel", { status: 401 });
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (request.nextUrl.pathname.startsWith("/admin")) {
+    // 1. If not logged in, send to login
+    if (!user) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("redirectTo", "/admin");
+      return NextResponse.redirect(loginUrl);
+    }
+
+    // 2. Check admin permissions
+    const userEmail = user.email?.trim().toLowerCase();
+    const isEmailAllowed = !!(userEmail && ADMIN_EMAILS.includes(userEmail));
+    const hasAdminRole =
+      user.user_metadata?.role === "admin" ||
+      user.app_metadata?.role === "admin";
+
+    if (!isEmailAllowed && !hasAdminRole) {
+      return NextResponse.redirect(new URL("/account", request.url));
     }
   }
 
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {

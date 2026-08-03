@@ -5,15 +5,15 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import crypto from "crypto";
 
-// Support both standard server ENVs and public ENVs
 const envEmails = process.env.ADMIN_EMAILS || process.env.NEXT_PUBLIC_ADMIN_EMAILS;
-const ADMIN_EMAILS = envEmails ? envEmails.split(",").map((e) => e.trim()) : ["muqasim444@gmail.com"];
+const ADMIN_EMAILS = envEmails
+  ? envEmails.split(",").map((e) => e.trim().toLowerCase())
+  : ["muqasim444@gmail.com"];
 
 export async function POST(request: Request) {
   try {
     const cookieStore = await cookies();
 
-    // Initialize Supabase Server Client with @supabase/ssr
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -28,21 +28,20 @@ export async function POST(request: Request) {
                 cookieStore.set(name, value, options)
               );
             } catch {
-              // Ignore if called from Server Component context
+              // Context check fallback
             }
           },
         },
       }
     );
 
-    // Verify authenticated user session
     const { data: { session } } = await supabase.auth.getSession();
 
     if (!session) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
-    const userEmail = session.user.email;
+    const userEmail = session.user.email?.toLowerCase();
     const userRole = session.user.user_metadata?.role;
     const isAllowed = (userEmail && ADMIN_EMAILS.includes(userEmail)) || userRole === "admin";
 
@@ -59,14 +58,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // Generate formatted license key: AIVB-PRO-XXXX-XXXX-XXXX
-    const randomSegment = () =>
-      crypto.randomBytes(2).toString("hex").toUpperCase();
-    const generatedKey = `AIVB-${tier}-${randomSegment()}-${randomSegment()}-${randomSegment()}`;
-
     const supabaseAdmin = getSupabaseAdmin();
 
-    // Insert new license record
+    // Look up target user ID from email
+    const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
+    const targetUser = usersData?.users?.find(
+      (u) => u.email?.toLowerCase() === email.trim().toLowerCase()
+    );
+
+    // Format Key
+    const randomSegment = () => crypto.randomBytes(2).toString("hex").toUpperCase();
+    const generatedKey = `AIVB-${tier}-${randomSegment()}-${randomSegment()}-${randomSegment()}`;
+
+    // Insert key with optional user_id binding
     const { data: newLicense, error: insertError } = await supabaseAdmin
       .from("licenses")
       .insert([
@@ -75,6 +79,7 @@ export async function POST(request: Request) {
           tier: tier,
           max_devices: max_devices,
           status: "ACTIVE",
+          user_id: targetUser ? targetUser.id : null,
         },
       ])
       .select()
@@ -82,22 +87,22 @@ export async function POST(request: Request) {
 
     if (insertError) {
       return NextResponse.json(
-        { success: false, error: "Database error creating key." },
+        { success: false, error: `Database error: ${insertError.message}` },
         { status: 500 }
       );
     }
 
-    // Dispatch email notification
+    // Send email via OneSignal
     const emailResult = await sendLicenseEmail(email, generatedKey);
 
     return NextResponse.json({
       success: true,
       license: newLicense,
-      emailSent: emailResult.success,
+      emailSent: emailResult?.success || false,
     });
-  } catch (error) {
+  } catch (error: any) {
     return NextResponse.json(
-      { success: false, error: "Failed to generate license." },
+      { success: false, error: error.message || "Failed to generate license." },
       { status: 500 }
     );
   }
