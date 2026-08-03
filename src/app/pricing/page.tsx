@@ -41,10 +41,23 @@ export default function PricingPage() {
       return;
     }
 
+    // Open Paddle Checkout with proper overlay settings & lifecycle events to prevent freeze/lockup
     window.Paddle.Checkout.open({
       items: [{ priceId: priceId, quantity: 1 }],
       customData: {
         tier: tierName,
+      },
+      settings: {
+        displayMode: 'overlay',
+        theme: 'dark',
+      },
+      events: {
+        onClose: () => {
+          console.log('Paddle checkout closed by user.');
+        },
+        onError: (error: any) => {
+          console.error('Paddle checkout error:', error);
+        },
       },
     });
   };
@@ -87,17 +100,27 @@ export default function PricingPage() {
         </button>
       </div>
 
-      {/* Header */}
+      {/* Main Header & System Alert */}
       <div className="max-w-4xl mx-auto text-center mb-16 space-y-4">
+        {/* Payment Methods Notice Banner */}
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-medium backdrop-blur-md mb-2">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+          <span>
+            <b>Card Checkout Maintenance:</b> Direct card payments are currently down. Please use the <b>Pay via JazzCash / EasyPaisa (PK)</b> button above to complete manual payment.
+          </span>
+        </div>
+
         <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 text-xs font-mono text-cyan-400">
           <Sparkles className="w-3.5 h-3.5" /> Perpetual Hardware License Engine
         </div>
+
         <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight">
           Flexible Pricing for{' '}
           <span className="bg-gradient-to-r from-cyan-400 via-teal-300 to-indigo-400 bg-clip-text text-transparent">
             Power Creators
           </span>
         </h1>
+
         <p className="text-neutral-400 text-sm md:text-base max-w-xl mx-auto">
           Scale your video assembly workflow with localized AI script parsing and hardware-bound activation management.
         </p>
@@ -314,7 +337,7 @@ export default function PricingPage() {
               </div>
             </div>
 
-            {/* Verification Instructions */}
+            {/* Verification Steps */}
             <div className="p-4 rounded-xl bg-cyan-500/5 border border-cyan-500/20 space-y-2">
               <h4 className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
                 <Send className="w-3.5 h-3.5" /> Required Verification Step:
